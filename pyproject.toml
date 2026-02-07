@@ -1,7 +1,7 @@
 [project]
-name = "elephant-identify"
+name = "plant-identify"
 version = "0.1.0"
-description = "identify elephant based on video embeddings method"
+description = "identify plants Diameter at Breast Height (DBH) from images using depth estimation"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = []
@@ -31,12 +31,13 @@ notebook = [
     "opencv-python>=4.11.0.86",
     "transformers>=4.57.5",
     "timm>=1.0.24",
-    "wildlife-datasets>=1.0.7",
     "pydantic>=2.12.5",
+    "gradio>=4.29.0",
+    "gradio_imageslider",
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src"]
+packages = ["src", "src/depth_anything_v2"]
 
 [tool.hatch.metadata]
 allow-direct-references = true
