@@ -3,7 +3,7 @@ name = "plant-identify"
 version = "0.1.0"
 description = "identify plants Diameter at Breast Height (DBH) from images using depth estimation"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = "==3.10.11"
 dependencies = []
 
 [dependency-groups]
