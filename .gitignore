@@ -11,3 +11,6 @@ wheels/
 
 # dataset
 dataset/
+
+# wandb cache
+notebooks/wandb/
