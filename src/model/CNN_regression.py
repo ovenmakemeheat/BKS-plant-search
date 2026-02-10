@@ -4,6 +4,7 @@ from datetime import datetime
 from pathlib import Path
 
 import numpy as np
+from PIL import Image
 import pandas as pd
 import timm
 import torch
@@ -25,45 +26,84 @@ class Config:
     epochs: int = 300
     batch_size: int = 32
     lr: float = 1e-3
-    image_size: int = 192
-    num_workers: int = 4
+    image_size: int = 224
+    num_workers: int = 0
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
 
     log_every_n_batches: int = 4
 
-    base_path: str = "../dataset/DepthMapDBH2023/"
+    base_path: str = "/kaggle/input/depthmapdbh-da/DepthMapDBH2023/"
     segmentation_model_name: str = "DA3_LARGE"
     models = [
-        "mobilenetv2_100",
-        "mobilenetv3_small_100",
-        "densenet121",
-        "efficientnet_b0",
+        "resnet50"
+        # "vit_base_patch32_clip_448"
     ]
 
 
-def get_train_transforms(image_size):
-    return T.Compose(
-        [
-            T.Resize((image_size, image_size)),
-            # T.RandomHorizontalFlip(p=0.5),
-            T.Normalize(mean=[0.5], std=[0.25]),
-        ]
+def get_train_transforms(image_size, in_channels=3):
+    transforms = [
+        T.Resize((image_size, image_size)),
+        # T.RandomHorizontalFlip(p=0.5),
+        T.ToTensor(),
+    ]
+
+    if in_channels == 1:
+        # replicate 1 → 3 channels for ImageNet backbones
+        transforms.append(T.Lambda(lambda x: x.repeat(3, 1, 1)))
+
+    transforms.append(
+        T.Normalize(
+            mean=[0.485, 0.456, 0.406],
+            std=[0.229, 0.224, 0.225],
+        )
     )
 
+    return T.Compose(transforms)
 
-def get_eval_transforms(image_size):
-    return T.Compose(
-        [
-            T.Resize((image_size, image_size)),
-            T.Normalize(mean=[0.5], std=[0.25]),
-        ]
+
+def get_eval_transforms(image_size, in_channels=3):
+    transforms = [
+        T.Resize((image_size, image_size)),
+        T.ToTensor(),
+    ]
+
+    if in_channels == 1:
+        transforms.append(T.Lambda(lambda x: x.repeat(3, 1, 1)))
+
+    transforms.append(
+        T.Normalize(
+            mean=[0.485, 0.456, 0.406],
+            std=[0.229, 0.224, 0.225],
+        )
     )
+
+    return T.Compose(transforms)
+
+
+def filter_dbh_dataframe(
+    df: pd.DataFrame,
+    min_dbh: float = 0.0,
+    verbose: bool = True,
+) -> pd.DataFrame:
+    if "DBH" not in df.columns:
+        raise ValueError("DataFrame must contain 'DBH' column")
+
+    before = len(df)
+    df = df[df["DBH"] > min_dbh].copy()
+    df.reset_index(drop=True, inplace=True)
+    after = len(df)
+
+    if verbose:
+        print(f"[DBH Filter] DBH > {min_dbh}: {before} → {after}")
+
+    return df
 
 
 class DBHDepthDataset(Dataset):
     def __init__(self, csv_file, base_path, transform=None):
         self.base_path = Path(base_path)
-        self.data = pd.read_csv(csv_file)
+        df = pd.read_csv(csv_file)
+        self.data = filter_dbh_dataframe(df, min_dbh=0)
         self.transform = transform
 
     def __len__(self):
@@ -71,20 +111,41 @@ class DBHDepthDataset(Dataset):
 
     def __getitem__(self, idx):
         row = self.data.iloc[idx]
-
-        depth_map_path = self.base_path / row["depth_anything_maps_path"]
+        depth_map_path = self.base_path / Path(row["depth_anything_maps_path"].replace("\\", "/"))
         x = np.load(depth_map_path).astype(np.float32)
-
-        # normalize to [0,1]
-        x = x / 255.0
-
-        # to tensor: [1, H, W]
-        x = torch.from_numpy(x).unsqueeze(0)
-
+        x = np.clip(x, 0, 255).astype(np.uint8)
+        x = Image.fromarray(x, mode="L")
         if self.transform is not None:
             x = self.transform(x)
 
-        y = torch.tensor(row["DBH"], dtype=torch.float32)
+        y = row["DBH"]
+        y = np.log1p(y)
+
+        y = torch.tensor(y, dtype=torch.float32)
+
+        return x, y
+
+
+class DBHImageDataset(Dataset):
+    def __init__(self, csv_file, base_path, transform=None):
+        self.base_path = Path(base_path)
+        df = pd.read_csv(csv_file)
+        self.data = filter_dbh_dataframe(df, min_dbh=0)
+
+        self.transform = transform
+
+    def __getitem__(self, idx):
+        row = self.data.iloc[idx]
+
+        img_path = self.base_path / row["image_path"].split("/")[0] / row["image_path"]
+        img = Image.open(img_path).convert("RGB")
+
+        x = self.transform(img) if self.transform else T.ToTensor()(img)
+
+        y = row["DBH"]
+        y = np.log1p(y)
+
+        y = torch.tensor(y, dtype=torch.float32)
         return x, y
 
 
@@ -92,7 +153,7 @@ class DBHRegressor(nn.Module):
     def __init__(self, backbone_name: str):
         super().__init__()
 
-        self.input_conv = nn.Conv2d(1, 3, kernel_size=3, padding=1)
+        # self.input_conv = nn.Conv2d(1, 3, kernel_size=3, padding=1)
 
         self.backbone = timm.create_model(
             backbone_name,
@@ -104,7 +165,7 @@ class DBHRegressor(nn.Module):
         self.head = nn.Linear(self.backbone.num_features, 1)
 
     def forward(self, x):
-        x = self.input_conv(x)
+        # x = self.input_conv(x)
         x = self.backbone(x)
         return self.head(x).squeeze(1)
 
@@ -183,8 +244,32 @@ def main():
     train_csv = Path(cfg.base_path) / "train/train/files_with_depth_maps_DA3_LARGE.csv"
     test_csv = Path(cfg.base_path) / "test/test/files_with_depth_maps_DA3_LARGE.csv"
 
-    full_dataset = DBHDepthDataset(train_csv, cfg.base_path)
-    test_dataset = DBHDepthDataset(test_csv, cfg.base_path)
+    train_tfms = get_train_transforms(cfg.image_size, in_channels=1)
+    eval_tfms = get_eval_transforms(cfg.image_size, in_channels=1)
+
+    full_dataset = DBHDepthDataset(
+        train_csv,
+        cfg.base_path,
+        transform=train_tfms,
+    )
+
+    test_dataset = DBHDepthDataset(
+        test_csv,
+        cfg.base_path,
+        transform=eval_tfms,
+    )
+
+    # full_dataset = DBHImageDataset(
+    #     train_csv,
+    #     cfg.base_path,
+    #     transform=train_tfms,
+    # )
+
+    # test_dataset = DBHImageDataset(
+    #     test_csv,
+    #     cfg.base_path,
+    #     transform=eval_tfms,
+    # )
 
     train_size = int(0.8 * len(full_dataset))
     val_size = len(full_dataset) - train_size
@@ -269,8 +354,14 @@ def main():
                 best_val = val_metrics["loss"]
                 wait = 0
 
-                ckpt_path = f"{run_name}_best.pt"
+                ckpt_path = f"{run_name}_{epoch}_best.pt"
                 torch.save(model.state_dict(), ckpt_path)
+
+                print(
+                    f"[LOG] Epoch {epoch:03d} | "
+                    f"New best val loss: {best_val:.6f} | "
+                    f"Checkpoint saved → {ckpt_path}"
+                )
 
                 artifact = wandb.Artifact(
                     name=f"{backbone}-dbh-regressor",
@@ -287,7 +378,7 @@ def main():
                 run.log_artifact(artifact)
 
         # Test
-        model.load_state_dict(torch.load(f"{run_name}_best.pt"))
+        model.load_state_dict(torch.load(f"{run_name}_{epoch}_best.pt"))
         test_metrics = evaluate(model, test_loader, loss_fn, metrics, cfg.device)
 
         wandb.log({f"test_{k}": v for k, v in test_metrics.items()})
