@@ -9,8 +9,9 @@ wheels/
 # Virtual environments
 .venv
 
-# dataset
+# dataset & model
 dataset/
+model/
 
 # wandb cache
 notebooks/wandb/

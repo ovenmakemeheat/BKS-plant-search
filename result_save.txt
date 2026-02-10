@@ -1,0 +1,12 @@
+/kaggle/working/resnet50_depth_dbh_DA3_LARGE_20260209_1724_22_best.pt
+epoch	32
+test_loss	340.5182
+test_mae	14.13787
+test_r2	0.65267
+test_rmse	18.45313
+train/batch_loss	11.8761
+train/loss	31.35778
+val/loss	492.90439
+val/mae	16.18248
+val/r2	0.23528
+

@@ -29,6 +29,8 @@ class Config:
     num_workers: int = 4
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
 
+    log_every_n_batches: int = 4
+
     base_path: str = "../dataset/DepthMapDBH2023/"
     segmentation_model_name: str = "DA3_LARGE"
     models = [
@@ -39,10 +41,30 @@ class Config:
     ]
 
 
+def get_train_transforms(image_size):
+    return T.Compose(
+        [
+            T.Resize((image_size, image_size)),
+            # T.RandomHorizontalFlip(p=0.5),
+            T.Normalize(mean=[0.5], std=[0.25]),
+        ]
+    )
+
+
+def get_eval_transforms(image_size):
+    return T.Compose(
+        [
+            T.Resize((image_size, image_size)),
+            T.Normalize(mean=[0.5], std=[0.25]),
+        ]
+    )
+
+
 class DBHDepthDataset(Dataset):
-    def __init__(self, csv_file, base_path):
+    def __init__(self, csv_file, base_path, transform=None):
         self.base_path = Path(base_path)
         self.data = pd.read_csv(csv_file)
+        self.transform = transform
 
     def __len__(self):
         return len(self.data)
@@ -50,18 +72,19 @@ class DBHDepthDataset(Dataset):
     def __getitem__(self, idx):
         row = self.data.iloc[idx]
 
-        # Load depth map from .npy file (504, 504)
         depth_map_path = self.base_path / row["depth_anything_maps_path"]
         x = np.load(depth_map_path).astype(np.float32)
 
-        # Normalize to [0, 1] range
+        # normalize to [0,1]
         x = x / 255.0
 
-        # Add channel dimension: [H, W] → [1, H, W]
+        # to tensor: [1, H, W]
         x = torch.from_numpy(x).unsqueeze(0)
 
-        y = torch.tensor(row["DBH"], dtype=torch.float32)
+        if self.transform is not None:
+            x = self.transform(x)
 
+        y = torch.tensor(row["DBH"], dtype=torch.float32)
         return x, y
 
 
@@ -86,13 +109,19 @@ class DBHRegressor(nn.Module):
         return self.head(x).squeeze(1)
 
 
-def train_one_epoch(model, loader, optimizer, loss_fn, device):
+def train_one_epoch(
+    model,
+    loader,
+    optimizer,
+    loss_fn,
+    device,
+    epoch,
+    log_every_n_batches=None,
+):
     model.train()
     total_loss = 0.0
 
-    pbar = tqdm(loader, desc="Train", leave=False)
-
-    for x, y in pbar:
+    for batch_idx, (x, y) in enumerate(tqdm(loader, desc="Train", leave=False)):
         x, y = x.to(device), y.to(device)
 
         optimizer.zero_grad()
@@ -105,7 +134,14 @@ def train_one_epoch(model, loader, optimizer, loss_fn, device):
         batch_loss = loss.item()
         total_loss += batch_loss * x.size(0)
 
-        pbar.set_postfix(loss=batch_loss)
+        if log_every_n_batches and batch_idx % log_every_n_batches == 0:
+            wandb.log(
+                {
+                    "train/batch_loss": batch_loss,
+                    "epoch": epoch,
+                },
+                step=epoch * len(loader) + batch_idx,
+            )
 
     return total_loss / len(loader.dataset)
 
@@ -185,13 +221,17 @@ def main():
             f"{backbone}_depth_dbh_{cfg.segmentation_model_name}_{datetime.now():%Y%m%d_%H%M}"
         )
 
-        wandb.init(
+        run = wandb.init(
             project="DBH-Depth-Map-CNN-Regression",
             name=run_name,
             config=vars(cfg),
         )
 
         model = DBHRegressor(backbone).to(cfg.device)
+
+        if torch.cuda.device_count() > 1:
+            print(f"Using {torch.cuda.device_count()} GPUs")
+            model = nn.DataParallel(model)
 
         optimizer = optim.AdamW(model.parameters(), lr=cfg.lr)
         loss_fn = nn.MSELoss()
@@ -205,16 +245,21 @@ def main():
         best_val = float("inf")
         patience, wait = 26, 0
 
-        for epoch in range(cfg.epochs):
-            train_loss = train_one_epoch(model, train_loader, optimizer, loss_fn, cfg.device)
+        for epoch in tqdm(range(cfg.epochs)):
+            train_loss = train_one_epoch(
+                model, train_loader, optimizer, loss_fn, cfg.device, epoch, cfg.log_every_n_batches
+            )
 
             val_metrics = evaluate(model, val_loader, loss_fn, metrics, cfg.device)
 
             wandb.log(
                 {
                     "epoch": epoch,
-                    "train_loss": train_loss,
-                    **{f"val_{k}": v for k, v in val_metrics.items()},
+                    "train/loss": train_loss,
+                    "val/loss": val_metrics["loss"],
+                    "val/rmse": val_metrics["rmse"],
+                    "val/mae": val_metrics["mae"],
+                    "val/r2": val_metrics["r2"],
                 }
             )
 
@@ -223,15 +268,23 @@ def main():
             if val_metrics["loss"] < best_val:
                 best_val = val_metrics["loss"]
                 wait = 0
-                torch.save(
-                    model.state_dict(),
-                    f"{run_name}_best.pt",
+
+                ckpt_path = f"{run_name}_best.pt"
+                torch.save(model.state_dict(), ckpt_path)
+
+                artifact = wandb.Artifact(
+                    name=f"{backbone}-dbh-regressor",
+                    type="model",
+                    metadata={
+                        "backbone": backbone,
+                        "segmentation_model": cfg.segmentation_model_name,
+                        "epoch": epoch,
+                        "val_loss": best_val,
+                    },
                 )
-            else:
-                wait += 1
-                if wait >= patience:
-                    print("Early stopping")
-                    break
+
+                artifact.add_file(ckpt_path, overwrite=True)
+                run.log_artifact(artifact)
 
         # Test
         model.load_state_dict(torch.load(f"{run_name}_best.pt"))
