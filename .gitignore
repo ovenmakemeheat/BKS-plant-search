@@ -14,7 +14,7 @@ wheels/
 
 # dataset & model
 dataset/
-model/
+.model/
 
 # wandb cache
 notebooks/wandb/
