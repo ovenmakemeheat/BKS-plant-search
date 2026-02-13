@@ -27,6 +27,10 @@ dependencies = [
     "wandb>=0.24.2",
     "torchmetrics>=1.8.2",
     "deeplake>=3.9.50",
+    "huggingface-hub>=1.4.1",
+    "fastapi>=0.128.3",
+    "uvicorn>=0.40.0",
+    "python-multipart>=0.0.22",
 ]
 
 [dependency-groups]
