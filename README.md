@@ -48,3 +48,17 @@ Once the server is running, you can access the interactive API documentation at:
 - **Swagger UI**: http://localhost:8000/docs
 
 The Swagger UI provides an interactive interface where you can test API endpoints directly in your browser.
+
+### Docker Deployment
+
+Build and run the application using Docker:
+
+```bash
+# Build the Docker image
+docker build -t plant-identify .
+
+# Run the container
+docker run -p 8000:8000 plant-identify
+```
+
+The application will be available at http://localhost:8000
