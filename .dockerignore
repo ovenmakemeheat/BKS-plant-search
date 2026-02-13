@@ -1,0 +1,61 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Environment files
+.env
+.env.*
+
+# Dataset & model files
+dataset/
+.model/
+
+# Wandb cache
+notebooks/wandb/
+
+# Docker files
+Dockerfile
+.dockerignore
+
+# Git files
+.git
+.gitignore
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+tmp/
+temp/
+
+# Test files
+tests/
+test_*
+*test.py
+*spec.py
+
+# Coverage reports
+.coverage
+htmlcov/
+.nyc_output/
+coverage/

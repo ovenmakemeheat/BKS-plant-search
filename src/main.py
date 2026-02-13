@@ -79,10 +79,10 @@ model = load_model()
 
 
 # Initialize Depth Anything v3 for depth estimation
-def load_depth_model():
+def load_depth_model(model_name="depth-anything/DA3NESTED-GIANT-LARGE-1.1"):
     """Load the Depth Anything v3 model"""
     try:
-        depth_model = DepthAnything3.from_pretrained("depth-anything/DA3NESTED-GIANT-LARGE-1.1")
+        depth_model = DepthAnything3.from_pretrained(model_name)
         depth_model = depth_model.to(MODEL_CONFIG["device"])
         depth_model.eval()
         logger.info("Depth Anything v3 model loaded successfully")
@@ -92,7 +92,7 @@ def load_depth_model():
         raise
 
 
-depth_model = load_depth_model()
+depth_model = load_depth_model("depth-anything/DA3-LARGE-1.1")
 
 # FastAPI app
 app = FastAPI(

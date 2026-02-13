@@ -12,13 +12,16 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     build-essential \
     curl \
+    libgl1 \
+    libglib2.0-0 \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv
 RUN pip install --no-cache-dir uv
 
 # Copy dependency files first (for better Docker layer caching)
-COPY pyproject.toml uv.lock* ./
+COPY pyproject.toml uv.lock* README.md ./
 
 # Install dependencies
 RUN uv sync --frozen
