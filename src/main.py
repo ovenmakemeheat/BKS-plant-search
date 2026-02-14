@@ -7,13 +7,18 @@ import timm
 import torch
 import uvicorn
 from depth_anything_3.api import DepthAnything3
+from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from huggingface_hub import hf_hub_download
 from PIL import Image
 from pydantic import BaseModel
 
+from src.forward import start_ngrok_tunnel
+
 from src.model.CNN_regression import DBHRegressor, get_eval_transforms
+
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -375,13 +380,23 @@ def main():
         action="store_true",
         help="Enable auto-reloading for development.",
     )
+    parser.add_argument(
+        "--ngrok",
+        action="store_true",
+        help="Enable ngrok tunneling for public access.",
+    )
 
     args = parser.parse_args()
 
     if args.command == "serve":
         print(f"Starting API server on {args.host}:{args.port}")
 
-        uvicorn.run("api.main:app", host=args.host, port=args.port, reload=args.reload)
+        if args.ngrok:
+            # Start ngrok tunnel
+            public_url = start_ngrok_tunnel(args.port)
+            print(f"Public URL: {public_url}")
+
+        uvicorn.run("src.main:app", host=args.host, port=args.port, reload=args.reload)
 
 
 if __name__ == "__main__":
